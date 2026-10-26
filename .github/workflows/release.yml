@@ -1,37 +1,17 @@
-# A tag builds, packages and uploads all three platforms.
-# Tags only: no pull request ever reaches the self-hosted runners.
-name: release
-on:
-  push:
-    tags: ['v*']
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release tag to build and upload (e.g. v1.0.0)'
-        required: true
-        type: string
-permissions:
-  contents: write
 jobs:
   linux:
-    # WSL on the Windows runner keeps a built kernel.
-    runs-on: [self-hosted, ely-windows]
+    runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Build, package and upload for Linux
         shell: bash
         env:
           ELY_RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Organization secrets, built into ElyMail.
           ELY_MICROSOFT_CLIENT_ID: ${{ secrets.ELY_MICROSOFT_CLIENT_ID }}
-          WSLENV: ELY_RELEASE_TOKEN:ELY_MICROSOFT_CLIENT_ID
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          wsl -d Ubuntu --exec bash -lc '
-            set -euo pipefail
-            dir=$HOME/ely-ci/ElyOffice
-            [ -d "$dir/.git" ] || git clone https://github.com/ELY-Open-Source/ElyOffice.git "$dir"
-            git -C "$dir" remote set-url origin https://github.com/ELY-Open-Source/ElyOffice.git
-            git -C "$dir" fetch --force --tags origin
-            git -C "$dir" checkout --force "${{ github.sha }}"
-            ELY_SHARE=$HOME/Documents/Github/ElyOffice "$dir/scripts/ci.sh" linux "${{ github.ref_name }}"
-          '
+          case "$TAG" in v*) ;; *) echo "TAG must start with 'v'"; exit 1;; esac
+          ELY_SHARE="$RUNNER_TEMP/ely-share" "$PWD/scripts/ci.sh" linux "$TAG"
