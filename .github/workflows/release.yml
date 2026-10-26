@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to build and upload (e.g. v1.0.0)'
+        description: 'Release tag, must equal v<Cargo.toml version> (e.g. v0.1.3)'
         required: true
         type: string
 
@@ -18,15 +18,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          sudo apt-get clean
+          df -h
+
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
+
+      - uses: actions/cache/restore@v4
+        id: engines
+        with:
+          path: ${{ runner.temp }}/ely-share
+          key: engines-linux-${{ hashFiles('Cargo.toml', 'rust-toolchain.toml', 'scripts/build-*.sh', 'scripts/fetch-*.sh', 'packaging/linux/**') }}
 
       - name: Build, package and upload for Linux
         shell: bash
         env:
           ELY_RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ELY_MICROSOFT_CLIENT_ID: ${{ secrets.ELY_MICROSOFT_CLIENT_ID }}
+          ELY_RELEASE_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
@@ -34,4 +49,25 @@ jobs:
             v*) ;;
             *) echo "TAG must start with 'v', got: $TAG" >&2; exit 1 ;;
           esac
-          ELY_SHARE="$RUNNER_TEMP/ely-share" "$PWD/scripts/ci.sh" linux "$TAG"
+
+          # cache 命中才启用共享引擎；否则让 ci.sh 走源码全量构建
+          unset ELY_SHARE
+          if [ "${{ steps.engines.outputs.cache-hit }}" = "true" ]; then
+            export ELY_SHARE="$RUNNER_TEMP/ely-share"
+          fi
+
+          "$PWD/scripts/ci.sh" linux "$TAG"
+
+          # 首次构建（cache miss）：把引擎搬到 cache 路径，供下一步保存
+          if [ -z "${ELY_SHARE:-}" ]; then
+            mkdir -p "$RUNNER_TEMP/ely-share"
+            for part in engines reference; do
+              if [ -e "$part" ]; then mv "$part" "$RUNNER_TEMP/ely-share/$part"; fi
+            done
+          fi
+
+      - uses: actions/cache/save@v4
+        if: steps.engines.outputs.cache-hit != 'true'
+        with:
+          path: ${{ runner.temp }}/ely-share
+          key: engines-linux-${{ hashFiles('Cargo.toml', 'rust-toolchain.toml', 'scripts/build-*.sh', 'scripts/fetch-*.sh', 'packaging/linux/**') }}
