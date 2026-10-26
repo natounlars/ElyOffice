@@ -1,3 +1,18 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build and upload (e.g. v1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
 jobs:
   linux:
     runs-on: ubuntu-latest
@@ -6,6 +21,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Build, package and upload for Linux
         shell: bash
         env:
@@ -13,5 +29,9 @@ jobs:
           ELY_MICROSOFT_CLIENT_ID: ${{ secrets.ELY_MICROSOFT_CLIENT_ID }}
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          case "$TAG" in v*) ;; *) echo "TAG must start with 'v'"; exit 1;; esac
+          set -euo pipefail
+          case "$TAG" in
+            v*) ;;
+            *) echo "TAG must start with 'v', got: $TAG" >&2; exit 1 ;;
+          esac
           ELY_SHARE="$RUNNER_TEMP/ely-share" "$PWD/scripts/ci.sh" linux "$TAG"
